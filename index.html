@@ -154,12 +154,12 @@
     return { sx:sx, sy:sy, sw:sw, sh:sh };
   }
 
-  function drawTo(ctx, OUT_W, OUT_H){
+  function drawTo(ctx, OUT_W, OUT_H, mirror){
     var c=computeCrop(OUT_W, OUT_H);
     ctx.fillStyle='#000'; ctx.fillRect(0,0,OUT_W,OUT_H);
     if(!c) return;
     ctx.save();
-    ctx.translate(OUT_W,0); ctx.scale(-1,1);
+    if(mirror){ ctx.translate(OUT_W,0); ctx.scale(-1,1); }
     ctx.drawImage(cam, c.sx, c.sy, c.sw, c.sh, 0, 0, OUT_W, OUT_H);
     ctx.restore();
   }
@@ -167,7 +167,7 @@
   function startPreview(){
     var pctx=preview.getContext('2d');
     function loop(){
-      if(preview.width && cam.videoWidth) drawTo(pctx, preview.width, preview.height);
+      if(preview.width && cam.videoWidth) drawTo(pctx, preview.width, preview.height, true);
       previewRaf=requestAnimationFrame(loop);
     }
     loop();
@@ -218,7 +218,7 @@
     if(r>1){ OUT_W=1920; OUT_H=Math.round(OUT_W/r); } else { OUT_H=1280; OUT_W=Math.round(OUT_H*r); }
     out.width=OUT_W; out.height=OUT_H;
     var ctx=out.getContext('2d');
-    function draw(){ if(cam.videoWidth) drawTo(ctx, OUT_W, OUT_H); drawRaf=requestAnimationFrame(draw); }
+    function draw(){ if(cam.videoWidth) drawTo(ctx, OUT_W, OUT_H, false); drawRaf=requestAnimationFrame(draw); }
     draw();
   }
   function stopCanvasDraw(){ if(drawRaf) cancelAnimationFrame(drawRaf); drawRaf=null; }
