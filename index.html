@@ -1,0 +1,258 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<title>テレプロンプター録画</title>
+<style>
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; margin: 0; }
+  html, body { height: 100%; background: #000; overflow: hidden; }
+  body { font-family: -apple-system, BlinkMacSystemFont, "Hiragino Sans", sans-serif; color: #fff; display: flex; flex-direction: column; height: 100vh; }
+  #stage { position: relative; flex: 1; overflow: hidden; background: #000; display: flex; align-items: center; justify-content: center; }
+  #frame { position: relative; background: #000; overflow: hidden; }
+  canvas#preview { display: block; width: 100%; height: 100%; }
+  canvas#out { display: none; }
+
+  #promptLayer { position: absolute; inset: 0; overflow: hidden; pointer-events: none; z-index: 3; }
+  #promptInner {
+    position: absolute; top: 100%; left: 0; right: 0; padding: 0 7%;
+    font-size: 26px; line-height: 1.6; font-weight: 700; text-align: center;
+    white-space: pre-wrap; color: #fff; text-shadow: 0 0 6px rgba(0,0,0,0.95), 0 0 3px rgba(0,0,0,0.95);
+  }
+  #aim { position: absolute; left: 0; right: 0; top: 22%; height: 2px; background: rgba(255,90,90,0.4); z-index: 4; }
+  video#cam { display: none; }
+
+  #recDot { display: none; position: absolute; top: 8px; right: 10px; align-items: center; gap: 6px; background: rgba(0,0,0,0.55); padding: 5px 11px; border-radius: 20px; z-index: 5; }
+  #recDot .d { width: 9px; height: 9px; border-radius: 50%; background: #ff3b30; }
+  #recTime { font-size: 13px; font-weight: 600; }
+  #msg { position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%); background: rgba(0,0,0,0.6); padding: 10px 16px; border-radius: 10px; font-size: 14px; text-align: center; z-index: 6; max-width: 84%; }
+
+  #panel { background: #161616; border-top: 1px solid #2c2c2c; padding: 10px 14px calc(env(safe-area-inset-bottom) + 10px); display: flex; flex-direction: column; gap: 9px; }
+  .row { display: flex; gap: 8px; align-items: center; }
+  button { height: 50px; padding: 0 14px; font-size: 15px; background: #2c2c2c; color: #fff; border: 1px solid #4a4a4a; border-radius: 9px; font-family: inherit; white-space: nowrap; flex: 1; }
+  button:active { transform: scale(0.97); }
+  button.cam { flex: 0 0 auto; width: 56px; font-size: 20px; }
+  button.rec { background: #c0271f; border-color: #c0271f; }
+  .ctrl { display: flex; align-items: center; gap: 9px; flex: 1; }
+  .ctrl label { font-size: 12px; color: #999; min-width: 44px; }
+  .ctrl input { flex: 1; }
+  .ctrl .v { font-size: 12px; font-weight: 600; min-width: 30px; text-align: right; color: #ccc; }
+  select { height: 36px; background: #202020; color: #fff; border: 1px solid #4a4a4a; border-radius: 8px; font-family: inherit; font-size: 13px; padding: 0 6px; }
+  textarea { width: 100%; min-height: 50px; font-size: 15px; padding: 9px; border-radius: 9px; border: 1px solid #4a4a4a; background: #202020; color: #fff; font-family: inherit; resize: vertical; }
+  a.dl { display: none; height: 50px; align-items: center; justify-content: center; gap: 6px; background: #1f7a3d; border: 1px solid #1f7a3d; border-radius: 9px; color: #fff; text-decoration: none; font-size: 15px; flex: 1; }
+</style>
+</head>
+<body>
+  <div id="stage">
+    <div id="frame">
+      <video id="cam" autoplay playsinline muted></video>
+      <canvas id="preview"></canvas>
+      <canvas id="out"></canvas>
+      <div id="aim"></div>
+      <div id="promptLayer"><div id="promptInner">「カメラ」で許可 → 「引き」で胴体まで入るよう調整 → 「録画」。カンペは録画に写りません。</div></div>
+      <div id="recDot"><span class="d"></span><span id="recTime">0:00</span></div>
+      <div id="msg">下の「カメラ」ボタンから始めてください</div>
+    </div>
+  </div>
+
+  <div id="panel">
+    <div class="row">
+      <button id="camBtn" class="cam">📷</button>
+      <button id="recBtn" class="rec">● 録画</button>
+      <a id="dlLink" class="dl" download="prompter.mp4">⬇ 保存</a>
+    </div>
+    <div class="row">
+      <div class="ctrl"><label>引き</label><input type="range" id="zoom" min="100" max="280" value="180" step="1"><span class="v" id="zoomV">1.80</span></div>
+      <select id="ratio">
+        <option value="0.5625" selected>9:16</option>
+        <option value="0.8">4:5</option>
+        <option value="1">1:1</option>
+      </select>
+    </div>
+    <div class="row">
+      <div class="ctrl"><label>速度</label><input type="range" id="speed" min="10" max="180" value="55" step="1"><span class="v" id="speedV">55</span></div>
+      <div class="ctrl"><label>文字</label><input type="range" id="size" min="16" max="52" value="26" step="1"><span class="v" id="sizeV">26</span></div>
+    </div>
+    <textarea id="scriptInput" placeholder="ここに台本を貼り付け…">皆さん、こんにちは。本日はお集まりいただきありがとうございます。
+
+カメラのレンズを見ながら、自然に話せます。
+
+ゆっくり、落ち着いていきましょう。</textarea>
+  </div>
+
+<script>
+(function(){
+  var cam=document.getElementById('cam'),
+      stage=document.getElementById('stage'),
+      frame=document.getElementById('frame'),
+      preview=document.getElementById('preview'),
+      out=document.getElementById('out'),
+      inner=document.getElementById('promptInner'),
+      input=document.getElementById('scriptInput'),
+      camBtn=document.getElementById('camBtn'),
+      recBtn=document.getElementById('recBtn'),
+      dlLink=document.getElementById('dlLink'),
+      zoom=document.getElementById('zoom'), zoomV=document.getElementById('zoomV'),
+      ratioSel=document.getElementById('ratio'),
+      speed=document.getElementById('speed'), speedV=document.getElementById('speedV'),
+      size=document.getElementById('size'), sizeV=document.getElementById('sizeV'),
+      recDot=document.getElementById('recDot'), recTime=document.getElementById('recTime'),
+      msg=document.getElementById('msg');
+
+  var pos=0, playing=false, raf=null, last=null, stream=null;
+  var recorder=null, chunks=[], recTimer=null, recStart=0, lastScript='', mimeUsed='video/mp4';
+  var previewRaf=null, drawRaf=null;
+
+  function showMsg(t){ msg.textContent=t; msg.style.display='block'; }
+  function hideMsg(){ msg.style.display='none'; }
+
+  function layoutFrame(){
+    var r=parseFloat(ratioSel.value);
+    var availW=stage.clientWidth, availH=stage.clientHeight;
+    var w=availW, h=w/r;
+    if(h>availH){ h=availH; w=h*r; }
+    frame.style.width=Math.round(w)+'px';
+    frame.style.height=Math.round(h)+'px';
+    preview.width=Math.round(w); preview.height=Math.round(h);
+  }
+
+  function effectiveSource(){
+    var vw=cam.videoWidth, vh=cam.videoHeight;
+    return { w: vw, h: vh };
+  }
+
+  function computeCrop(OUT_W, OUT_H){
+    var s=effectiveSource();
+    if(!s.w||!s.h) return null;
+    var z=parseInt(zoom.value)/100;
+    var targetAR=OUT_W/OUT_H;
+    var coverScale=Math.min(s.w/OUT_W, s.h/OUT_H);
+    var sw=(OUT_W*coverScale)/z;
+    var sh=(OUT_H*coverScale)/z;
+    if(targetAR < s.w/s.h){
+      sh=Math.min(s.h, sh);
+      sw=sh*targetAR;
+    } else {
+      sw=Math.min(s.w, sw);
+      sh=sw/targetAR;
+    }
+    var maxScaleW=s.w/sw, maxScaleH=s.h/sh;
+    var lim=Math.min(maxScaleW, maxScaleH);
+    if(lim<1){ sw*=lim; sh*=lim; }
+    var sx=(s.w-sw)/2, sy=(s.h-sh)/2;
+    return { sx:sx, sy:sy, sw:sw, sh:sh };
+  }
+
+  function drawTo(ctx, OUT_W, OUT_H){
+    var c=computeCrop(OUT_W, OUT_H);
+    ctx.fillStyle='#000'; ctx.fillRect(0,0,OUT_W,OUT_H);
+    if(!c) return;
+    ctx.save();
+    ctx.translate(OUT_W,0); ctx.scale(-1,1);
+    ctx.drawImage(cam, c.sx, c.sy, c.sw, c.sh, 0, 0, OUT_W, OUT_H);
+    ctx.restore();
+  }
+
+  function startPreview(){
+    var pctx=preview.getContext('2d');
+    function loop(){
+      if(preview.width && cam.videoWidth) drawTo(pctx, preview.width, preview.height);
+      previewRaf=requestAnimationFrame(loop);
+    }
+    loop();
+  }
+
+  function applyText(){ inner.textContent=input.value||' '; pos=frame.clientHeight*0.22; render(); }
+  function render(){ inner.style.transform='translateY('+(-pos)+'px)'; }
+  function frameStep(t){
+    if(!last)last=t; var dt=(t-last)/1000; last=t;
+    pos+=parseInt(speed.value)*dt;
+    var max=frame.clientHeight*0.22+inner.offsetHeight;
+    if(pos>max){ pos=max; stopScroll(); }
+    render();
+    if(playing) raf=requestAnimationFrame(frameStep);
+  }
+  function startScroll(){ if(playing)return; syncText(); playing=true; last=null; raf=requestAnimationFrame(frameStep); }
+  function stopScroll(){ playing=false; cancelAnimationFrame(raf); }
+  function syncText(){ if(input.value!==lastScript){ lastScript=input.value; applyText(); } }
+
+  cam.addEventListener('loadedmetadata', function(){ layoutFrame(); });
+  zoom.addEventListener('input', function(){ zoomV.textContent=(parseInt(zoom.value)/100).toFixed(2); });
+  ratioSel.addEventListener('change', function(){ layoutFrame(); applyText(); });
+
+  camBtn.addEventListener('click', function(){
+    if(stream){ stream.getTracks().forEach(function(t){t.stop();}); stream=null; cam.srcObject=null; showMsg('カメラ停止中'); return; }
+    showMsg('カメラを起動中…');
+    navigator.mediaDevices.getUserMedia({video:{facingMode:'user',width:{ideal:1920},height:{ideal:1080}},audio:true})
+      .then(function(s){ stream=s; cam.srcObject=s; cam.play(); hideMsg(); if(!previewRaf) startPreview(); })
+      .catch(function(e){ showMsg('カメラを使えません: '+e.name); });
+  });
+
+  input.addEventListener('input', function(){ lastScript=input.value; applyText(); });
+  speed.addEventListener('input', function(){ speedV.textContent=speed.value; });
+  size.addEventListener('input', function(){ sizeV.textContent=size.value; inner.style.fontSize=size.value+'px'; });
+
+  function pad(n){ return String(n).padStart(2,'0'); }
+  function fmt(s){ return Math.floor(s/60)+':'+pad(s%60); }
+  function pickMime(){
+    var list=['video/mp4','video/mp4;codecs=h264','video/webm;codecs=h264','video/webm;codecs=vp9','video/webm;codecs=vp8','video/webm'];
+    if(!window.MediaRecorder) return null;
+    for(var i=0;i<list.length;i++){ try{ if(MediaRecorder.isTypeSupported(list[i])) return list[i]; }catch(e){} }
+    return '';
+  }
+
+  function startCanvasDraw(){
+    var r=parseFloat(ratioSel.value);
+    var OUT_H=1280, OUT_W=Math.round(OUT_H*r);
+    out.width=OUT_W; out.height=OUT_H;
+    var ctx=out.getContext('2d');
+    function draw(){ if(cam.videoWidth) drawTo(ctx, OUT_W, OUT_H); drawRaf=requestAnimationFrame(draw); }
+    draw();
+  }
+  function stopCanvasDraw(){ if(drawRaf) cancelAnimationFrame(drawRaf); drawRaf=null; }
+
+  recBtn.addEventListener('click', function(){
+    if(!stream){ showMsg('先に「カメラ」を押してください'); return; }
+    if(recorder && recorder.state==='recording'){ recorder.stop(); return; }
+    if(!window.MediaRecorder){ showMsg('この端末は録画に対応していません'); return; }
+
+    chunks=[];
+    var mime=pickMime();
+    if(mime===null){ showMsg('録画に対応していません'); return; }
+    mimeUsed = mime || 'video/mp4';
+    dlLink.download = (mimeUsed.indexOf('webm')>=0)?'prompter.webm':'prompter.mp4';
+
+    startCanvasDraw();
+    var canvasStream = out.captureStream(30);
+    var combined = new MediaStream();
+    canvasStream.getVideoTracks().forEach(function(t){ combined.addTrack(t); });
+    var atrack = stream.getAudioTracks()[0];
+    if(atrack) combined.addTrack(atrack);
+
+    try{ recorder = mime ? new MediaRecorder(combined,{mimeType:mime}) : new MediaRecorder(combined); }
+    catch(e){ try{ recorder=new MediaRecorder(combined); }catch(e2){ showMsg('録画を開始できません'); stopCanvasDraw(); return; } }
+
+    recorder.ondataavailable=function(e){ if(e.data && e.data.size>0) chunks.push(e.data); };
+    recorder.onstop=function(){
+      stopCanvasDraw();
+      if(chunks.length===0){ showMsg('録画データが空でした'); resetRecUI(); return; }
+      var blob=new Blob(chunks,{type:mimeUsed});
+      dlLink.href=URL.createObjectURL(blob); dlLink.style.display='flex';
+      resetRecUI(); showMsg('録画完了。「保存」を押してください'); setTimeout(hideMsg,2500);
+    };
+
+    try{ recorder.start(100); } catch(e){ try{ recorder.start(); }catch(e2){ showMsg('録画を開始できません'); stopCanvasDraw(); return; } }
+
+    recStart=Date.now(); recDot.style.display='flex';
+    recTimer=setInterval(function(){ recTime.textContent=fmt(Math.floor((Date.now()-recStart)/1000)); },500);
+    recBtn.textContent='■ 停止'; dlLink.style.display='none'; hideMsg(); startScroll();
+  });
+
+  function resetRecUI(){ recDot.style.display='none'; clearInterval(recTimer); recBtn.textContent='● 録画'; stopScroll(); }
+
+  window.addEventListener('resize', function(){ layoutFrame(); if(!playing) applyText(); });
+  layoutFrame(); applyText();
+})();
+</script>
+</body>
+</html>
